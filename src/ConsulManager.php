@@ -8,6 +8,7 @@ use Consul\Services\Health;
 use Consul\Services\KV;
 use Consul\Services\Session;
 use Exception;
+use JsonException;
 
 /**
  * ConsulManager — Fluent interface for HashiCorp Consul.
@@ -64,9 +65,10 @@ class ConsulManager
     /**
      * Store a value in the KV store.
      *
-     * @param  string  $key  Key name
-     * @param  mixed  $value  Value to store (arrays/objects are JSON-encoded)
+     * @param string $key Key name
+     * @param mixed $value Value to store (arrays/objects are JSON-encoded)
      * @return bool True if the write succeeded
+     * @throws JsonException
      */
     public function put(string $key, mixed $value): bool
     {
@@ -134,7 +136,57 @@ class ConsulManager
     }
 
     // =========================================================================
-    // Service Discovery
+    // Service Registration (config-driven)
+    // =========================================================================
+
+    /**
+     * Register this application as a Consul service using config/consul.php.
+     * Automatically builds the health check URL from the config.
+     * Called automatically on boot if consul.service.enabled is true.
+     */
+    public function register(): void
+    {
+        $service = config('consul.service');
+        $healthCheck = config('consul.health_check');
+
+        $definition = [
+            'ID' => $service['id'],
+            'Name' => $service['name'],
+            'Address' => $service['host'],
+            'Port' => $service['port'],
+        ];
+
+        if (! empty($service['tags'])) {
+            $definition['Tags'] = $service['tags'];
+        }
+
+        if (! empty($service['meta'])) {
+            $definition['Meta'] = $service['meta'];
+        }
+
+        if ($healthCheck['enabled'] ?? true) {
+            $scheme = str_contains(config('consul.address'), 'https') ? 'https' : 'http';
+            $definition['Check'] = [
+                'HTTP' => "$scheme://{$service['host']}:{$service['port']}{$healthCheck['endpoint']}",
+                'Interval' => $healthCheck['interval'] ?? '15s',
+                'Timeout' => $healthCheck['timeout'] ?? '5s',
+                'DeregisterCriticalServiceAfter' => $healthCheck['deregister_after'] ?? '10m',
+            ];
+        }
+
+        $this->agent->registerService($definition);
+    }
+
+    /**
+     * Deregister this application from Consul using the configured service ID.
+     */
+    public function deregister(): void
+    {
+        $this->agent->deregisterService(config('consul.service.id'));
+    }
+
+    // =========================================================================
+    // Service Discovery (manual)
     // =========================================================================
 
     /**
@@ -145,6 +197,7 @@ class ConsulManager
      * @param  array  $tags  Optional tags
      * @param  array  $meta  Optional metadata
      * @param  string|null  $id  Optional service ID (defaults to name)
+     * @param  array  $check  Optional health check definition
      */
     public function registerService(
         string $name,
@@ -152,6 +205,7 @@ class ConsulManager
         array $tags = [],
         array $meta = [],
         ?string $id = null,
+        array $check = [],
     ): void {
         $definition = [
             'Name' => $name,
@@ -166,6 +220,9 @@ class ConsulManager
         }
         if ($meta) {
             $definition['Meta'] = $meta;
+        }
+        if ($check) {
+            $definition['Check'] = $check;
         }
 
         $this->agent->registerService($definition);
@@ -185,6 +242,7 @@ class ConsulManager
      * Get all services known to the catalog.
      *
      * @return array Services indexed by name
+     * @throws JsonException
      */
     public function services(): array
     {
@@ -194,8 +252,9 @@ class ConsulManager
     /**
      * Get instances of a specific service.
      *
-     * @param  string  $name  Service name
+     * @param string $name Service name
      * @return array List of service instances with their details
+     * @throws JsonException
      */
     public function service(string $name): array
     {
@@ -238,9 +297,10 @@ class ConsulManager
     /**
      * Create a new Consul session.
      *
-     * @param  int  $ttlSeconds  Session TTL in seconds
-     * @param  string|null  $name  Optional session name
+     * @param int $ttlSeconds Session TTL in seconds
+     * @param string|null $name Optional session name
      * @return string The session ID
+     * @throws JsonException
      */
     public function createSession(int $ttlSeconds = 60, ?string $name = null): string
     {
@@ -266,10 +326,11 @@ class ConsulManager
     /**
      * Acquire a distributed lock.
      *
-     * @param  string  $lockKey  Key to lock on
-     * @param  string  $sessionId  Session ID that owns the lock
-     * @param  string  $value  Optional value to store with the lock
+     * @param string $lockKey Key to lock on
+     * @param string $sessionId Session ID that owns the lock
+     * @param string $value Optional value to store with the lock
      * @return bool True if the lock was acquired
+     * @throws JsonException
      */
     public function acquireLock(string $lockKey, string $sessionId, string $value = ''): bool
     {
@@ -283,9 +344,10 @@ class ConsulManager
     /**
      * Release a distributed lock.
      *
-     * @param  string  $lockKey  Key to unlock
-     * @param  string  $sessionId  Session ID that owns the lock
+     * @param string $lockKey Key to unlock
+     * @param string $sessionId Session ID that owns the lock
      * @return bool True if the lock was released
+     * @throws JsonException
      */
     public function releaseLock(string $lockKey, string $sessionId): bool
     {
@@ -300,10 +362,11 @@ class ConsulManager
      * Execute a callback while holding a distributed lock.
      * The lock is automatically released after the callback completes (or fails).
      *
-     * @param  string  $lockKey  Key to lock on
-     * @param  callable  $callback  Callback to execute while holding the lock
-     * @param  int  $ttlSeconds  Lock/session TTL in seconds
+     * @param string $lockKey Key to lock on
+     * @param callable $callback Callback to execute while holding the lock
+     * @param int $ttlSeconds Lock/session TTL in seconds
      * @return mixed The callback's return value, or false if the lock couldn't be acquired
+     * @throws JsonException
      */
     public function withLock(string $lockKey, callable $callback, int $ttlSeconds = 60): mixed
     {
