@@ -166,13 +166,7 @@ class ConsulManager
         }
 
         if ($healthCheck['enabled'] ?? true) {
-            $scheme = str_contains(config('consul.address'), 'https') ? 'https' : 'http';
-            $definition['Check'] = [
-                'HTTP' => "$scheme://{$service['host']}:{$service['port']}{$healthCheck['endpoint']}",
-                'Interval' => $healthCheck['interval'] ?? '15s',
-                'Timeout' => $healthCheck['timeout'] ?? '5s',
-                'DeregisterCriticalServiceAfter' => $healthCheck['deregister_after'] ?? '10m',
-            ];
+            $definition['Check'] = $this->buildCheckDefinition($service, $healthCheck);
         }
 
         $this->agent->registerService($definition);
@@ -184,6 +178,73 @@ class ConsulManager
     public function deregister(): void
     {
         $this->agent->deregisterService(config('consul.service.id'));
+    }
+
+    /**
+     * Send a TTL check-in to keep the service alive.
+     * Only needed when using health_check.type = "ttl".
+     *
+     * @param  string|null  $note  Optional status note
+     */
+    public function passCheck(?string $note = null): void
+    {
+        $checkId = 'service:'.config('consul.service.id');
+        $this->agent->passCheck($checkId, $note);
+    }
+
+    /**
+     * Build the Consul check definition based on the configured type.
+     */
+    private function buildCheckDefinition(array $service, array $healthCheck): array
+    {
+        $type = $healthCheck['type'] ?? 'http';
+
+        $check = [
+            'DeregisterCriticalServiceAfter' => $healthCheck['deregister_after'] ?? '10m',
+        ];
+
+        match ($type) {
+            'http' => $check += [
+                'HTTP' => $this->buildHealthUrl($service, $healthCheck),
+                'Interval' => $healthCheck['interval'] ?? '15s',
+                'Timeout' => $healthCheck['timeout'] ?? '5s',
+            ],
+            'tcp' => $check += [
+                'TCP' => "{$service['host']}:{$service['port']}",
+                'Interval' => $healthCheck['interval'] ?? '15s',
+                'Timeout' => $healthCheck['timeout'] ?? '5s',
+            ],
+            'script' => $check += [
+                'Args' => $healthCheck['args'] ?? [],
+                'Interval' => $healthCheck['interval'] ?? '15s',
+                'Timeout' => $healthCheck['timeout'] ?? '5s',
+            ],
+            'ttl' => $check += [
+                'TTL' => $healthCheck['ttl'] ?? '30s',
+            ],
+            'grpc' => $check += [
+                'GRPC' => $healthCheck['grpc'] ?? "{$service['host']}:{$service['port']}",
+                'Interval' => $healthCheck['interval'] ?? '15s',
+                'Timeout' => $healthCheck['timeout'] ?? '5s',
+            ],
+            default => $check += [
+                'HTTP' => $this->buildHealthUrl($service, $healthCheck),
+                'Interval' => $healthCheck['interval'] ?? '15s',
+                'Timeout' => $healthCheck['timeout'] ?? '5s',
+            ],
+        };
+
+        return $check;
+    }
+
+    /**
+     * Build the HTTP health check URL from config.
+     */
+    private function buildHealthUrl(array $service, array $healthCheck): string
+    {
+        $scheme = str_contains(config('consul.address'), 'https') ? 'https' : 'http';
+
+        return "{$scheme}://{$service['host']}:{$service['port']}{$healthCheck['endpoint']}";
     }
 
     // =========================================================================

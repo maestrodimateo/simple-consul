@@ -13,6 +13,7 @@ use Maestrodimateo\SimpleConsul\ConsulManager;
  * @method static array keys(string $prefix = '')
  * @method static void register()
  * @method static void deregister()
+ * @method static void passCheck(?string $note = null)
  * @method static void registerService(string $name, int $port, array $tags = [], array $meta = [], ?string $id = null, array $check = [])
  * @method static void deregisterService(string $serviceId)
  * @method static array services()
