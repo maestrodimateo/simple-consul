@@ -65,9 +65,10 @@ class ConsulManager
     /**
      * Store a value in the KV store.
      *
-     * @param string $key Key name
-     * @param mixed $value Value to store (arrays/objects are JSON-encoded)
+     * @param  string  $key  Key name
+     * @param  mixed  $value  Value to store (arrays/objects are JSON-encoded)
      * @return bool True if the write succeeded
+     *
      * @throws JsonException
      */
     public function put(string $key, mixed $value): bool
@@ -242,6 +243,7 @@ class ConsulManager
      * Get all services known to the catalog.
      *
      * @return array Services indexed by name
+     *
      * @throws JsonException
      */
     public function services(): array
@@ -252,8 +254,9 @@ class ConsulManager
     /**
      * Get instances of a specific service.
      *
-     * @param string $name Service name
+     * @param  string  $name  Service name
      * @return array List of service instances with their details
+     *
      * @throws JsonException
      */
     public function service(string $name): array
@@ -297,9 +300,10 @@ class ConsulManager
     /**
      * Create a new Consul session.
      *
-     * @param int $ttlSeconds Session TTL in seconds
-     * @param string|null $name Optional session name
+     * @param  int  $ttlSeconds  Session TTL in seconds
+     * @param  string|null  $name  Optional session name
      * @return string The session ID
+     *
      * @throws JsonException
      */
     public function createSession(int $ttlSeconds = 60, ?string $name = null): string
@@ -326,10 +330,11 @@ class ConsulManager
     /**
      * Acquire a distributed lock.
      *
-     * @param string $lockKey Key to lock on
-     * @param string $sessionId Session ID that owns the lock
-     * @param string $value Optional value to store with the lock
+     * @param  string  $lockKey  Key to lock on
+     * @param  string  $sessionId  Session ID that owns the lock
+     * @param  string  $value  Optional value to store with the lock
      * @return bool True if the lock was acquired
+     *
      * @throws JsonException
      */
     public function acquireLock(string $lockKey, string $sessionId, string $value = ''): bool
@@ -344,9 +349,10 @@ class ConsulManager
     /**
      * Release a distributed lock.
      *
-     * @param string $lockKey Key to unlock
-     * @param string $sessionId Session ID that owns the lock
+     * @param  string  $lockKey  Key to unlock
+     * @param  string  $sessionId  Session ID that owns the lock
      * @return bool True if the lock was released
+     *
      * @throws JsonException
      */
     public function releaseLock(string $lockKey, string $sessionId): bool
@@ -362,10 +368,11 @@ class ConsulManager
      * Execute a callback while holding a distributed lock.
      * The lock is automatically released after the callback completes (or fails).
      *
-     * @param string $lockKey Key to lock on
-     * @param callable $callback Callback to execute while holding the lock
-     * @param int $ttlSeconds Lock/session TTL in seconds
+     * @param  string  $lockKey  Key to lock on
+     * @param  callable  $callback  Callback to execute while holding the lock
+     * @param  int  $ttlSeconds  Lock/session TTL in seconds
      * @return mixed The callback's return value, or false if the lock couldn't be acquired
+     *
      * @throws JsonException
      */
     public function withLock(string $lockKey, callable $callback, int $ttlSeconds = 60): mixed
