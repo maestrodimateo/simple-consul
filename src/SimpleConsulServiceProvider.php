@@ -14,11 +14,11 @@ class SimpleConsulServiceProvider extends ServiceProvider
 
         $this->app->singleton(ConsulManager::class, function () {
             $address = config('consul.address', 'http://127.0.0.1:8500');
-            putenv("CONSUL_HTTP_ADDR={$address}");
+            putenv("CONSUL_HTTP_ADDR=$address");
 
             $token = config('consul.token');
             if ($token) {
-                putenv("CONSUL_HTTP_TOKEN={$token}");
+                putenv("CONSUL_HTTP_TOKEN=$token");
             }
 
             return new ConsulManager;

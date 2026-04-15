@@ -69,6 +69,7 @@ return [
     'health_check' => [
         'enabled' => env('CONSUL_HEALTH_CHECK_ENABLED', true),
         'type' => env('CONSUL_HEALTH_CHECK_TYPE', 'http'),
+        'scheme' => env('CONSUL_HEALTH_CHECK_SCHEME', 'http'),
         'endpoint' => env('CONSUL_HEALTH_CHECK_ENDPOINT', '/up'),
         'interval' => env('CONSUL_HEALTH_CHECK_INTERVAL', '15s'),
         'timeout' => env('CONSUL_HEALTH_CHECK_TIMEOUT', '5s'),

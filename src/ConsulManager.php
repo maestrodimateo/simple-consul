@@ -204,11 +204,6 @@ class ConsulManager
         ];
 
         match ($type) {
-            'http' => $check += [
-                'HTTP' => $this->buildHealthUrl($service, $healthCheck),
-                'Interval' => $healthCheck['interval'] ?? '15s',
-                'Timeout' => $healthCheck['timeout'] ?? '5s',
-            ],
             'tcp' => $check += [
                 'TCP' => "{$service['host']}:{$service['port']}",
                 'Interval' => $healthCheck['interval'] ?? '15s',
@@ -239,12 +234,13 @@ class ConsulManager
 
     /**
      * Build the HTTP health check URL from config.
+     * Uses the explicit scheme config instead of guessing from Consul's own address.
      */
     private function buildHealthUrl(array $service, array $healthCheck): string
     {
-        $scheme = str_contains(config('consul.address'), 'https') ? 'https' : 'http';
+        $scheme = $healthCheck['scheme'] ?? 'http';
 
-        return "{$scheme}://{$service['host']}:{$service['port']}{$healthCheck['endpoint']}";
+        return "$scheme://{$service['host']}:{$service['port']}{$healthCheck['endpoint']}";
     }
 
     // =========================================================================
