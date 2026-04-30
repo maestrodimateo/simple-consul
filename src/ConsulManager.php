@@ -8,7 +8,6 @@ use Consul\Services\Health;
 use Consul\Services\KV;
 use Consul\Services\Session;
 use Exception;
-use JsonException;
 
 /**
  * ConsulManager — Fluent interface for HashiCorp Consul.
@@ -18,25 +17,20 @@ use JsonException;
  */
 class ConsulManager
 {
-    private KV $kv;
+    private ?KV $kv = null;
 
-    private Agent $agent;
+    private ?Agent $agent = null;
 
-    private Catalog $catalog;
+    private ?Catalog $catalog = null;
 
-    private Health $health;
+    private ?Health $health = null;
 
-    private Session $session;
+    private ?Session $session = null;
 
     private string $prefix;
 
     public function __construct()
     {
-        $this->kv = new KV;
-        $this->agent = new Agent;
-        $this->catalog = new Catalog;
-        $this->health = new Health;
-        $this->session = new Session;
         $this->prefix = config('consul.kv_prefix', '');
     }
 
@@ -54,7 +48,7 @@ class ConsulManager
     public function get(string $key, mixed $default = null): mixed
     {
         try {
-            $response = $this->kv->get($this->prefixed($key), ['raw' => true]);
+            $response = $this->kv()->get($this->prefixed($key), ['raw' => true]);
 
             return $this->decodeValue($response->getBody()) ?? $default;
         } catch (Exception) {
@@ -68,16 +62,14 @@ class ConsulManager
      * @param  string  $key  Key name
      * @param  mixed  $value  Value to store (arrays/objects are JSON-encoded)
      * @return bool True if the write succeeded
-     *
-     * @throws JsonException
      */
     public function put(string $key, mixed $value): bool
     {
         $encoded = is_array($value) || is_object($value)
-            ? json_encode($value)
+            ? json_encode($value, JSON_THROW_ON_ERROR)
             : (string) $value;
 
-        return (bool) $this->kv->put($this->prefixed($key), $encoded)->json();
+        return (bool) $this->kv()->put($this->prefixed($key), $encoded)->json();
     }
 
     /**
@@ -89,7 +81,7 @@ class ConsulManager
     public function delete(string $key): bool
     {
         try {
-            $this->kv->delete($this->prefixed($key));
+            $this->kv()->delete($this->prefixed($key));
 
             return true;
         } catch (Exception) {
@@ -105,9 +97,9 @@ class ConsulManager
     public function has(string $key): bool
     {
         try {
-            $this->kv->get($this->prefixed($key));
+            $keys = $this->kv()->get($this->prefixed($key), ['keys' => true])->json();
 
-            return true;
+            return ! empty($keys);
         } catch (Exception) {
             return false;
         }
@@ -122,13 +114,14 @@ class ConsulManager
     public function keys(string $prefix = ''): array
     {
         try {
-            $response = $this->kv->get($this->prefixed($prefix), ['keys' => true]);
+            $response = $this->kv()->get($this->prefixed($prefix), ['keys' => true]);
             $keys = $response->json();
 
             $globalPrefix = $this->prefix;
+            $prefixLen = strlen($globalPrefix);
 
             return array_map(
-                fn (string $key) => $globalPrefix ? str_replace($globalPrefix, '', $key) : $key,
+                fn (string $key) => $globalPrefix ? substr($key, $prefixLen) : $key,
                 $keys ?? [],
             );
         } catch (Exception) {
@@ -142,7 +135,6 @@ class ConsulManager
 
     /**
      * Register this application as a Consul service using config/consul.php.
-     * Automatically builds the health check URL from the config.
      * Called automatically on boot if consul.service.enabled is true.
      */
     public function register(): void
@@ -169,7 +161,7 @@ class ConsulManager
             $definition['Check'] = $this->buildCheckDefinition($service, $healthCheck);
         }
 
-        $this->agent->registerService($definition);
+        $this->agent()->registerService($definition);
     }
 
     /**
@@ -177,7 +169,7 @@ class ConsulManager
      */
     public function deregister(): void
     {
-        $this->agent->deregisterService(config('consul.service.id'));
+        $this->agent()->deregisterService(config('consul.service.id'));
     }
 
     /**
@@ -189,13 +181,13 @@ class ConsulManager
     public function passCheck(?string $note = null): void
     {
         $checkId = 'service:'.config('consul.service.id');
-        $this->agent->passCheck($checkId, $note);
+        $this->agent()->passCheck($checkId, $note);
     }
 
     /**
      * Build the Consul check definition based on the configured type.
      */
-    private function buildCheckDefinition(array $service, array $healthCheck): array
+    protected function buildCheckDefinition(array $service, array $healthCheck): array
     {
         $type = $healthCheck['type'] ?? 'http';
 
@@ -204,39 +196,26 @@ class ConsulManager
         ];
 
         match ($type) {
-            'tcp' => $check += [
-                'TCP' => "{$service['host']}:{$service['port']}",
-                'Interval' => $healthCheck['interval'] ?? '15s',
-                'Timeout' => $healthCheck['timeout'] ?? '5s',
-            ],
-            'script' => $check += [
-                'Args' => $healthCheck['args'] ?? [],
-                'Interval' => $healthCheck['interval'] ?? '15s',
-                'Timeout' => $healthCheck['timeout'] ?? '5s',
-            ],
-            'ttl' => $check += [
-                'TTL' => $healthCheck['ttl'] ?? '30s',
-            ],
-            'grpc' => $check += [
-                'GRPC' => $healthCheck['grpc'] ?? "{$service['host']}:{$service['port']}",
-                'Interval' => $healthCheck['interval'] ?? '15s',
-                'Timeout' => $healthCheck['timeout'] ?? '5s',
-            ],
-            default => $check += [
-                'HTTP' => $this->buildHealthUrl($service, $healthCheck),
-                'Interval' => $healthCheck['interval'] ?? '15s',
-                'Timeout' => $healthCheck['timeout'] ?? '5s',
-            ],
+            'tcp' => $check['TCP'] = "{$service['host']}:{$service['port']}",
+            'script' => $check['Args'] = $healthCheck['args'] ?? [],
+            'ttl' => $check['TTL'] = $healthCheck['ttl'] ?? '30s',
+            'grpc' => $check['GRPC'] = $healthCheck['grpc'] ?? "{$service['host']}:{$service['port']}",
+            default => $check['HTTP'] = $this->buildHealthUrl($service, $healthCheck),
         };
+
+        // All types except TTL need Interval and Timeout
+        if ($type !== 'ttl') {
+            $check['Interval'] = $healthCheck['interval'] ?? '15s';
+            $check['Timeout'] = $healthCheck['timeout'] ?? '5s';
+        }
 
         return $check;
     }
 
     /**
      * Build the HTTP health check URL from config.
-     * Uses the explicit scheme config instead of guessing from Consul's own address.
      */
-    private function buildHealthUrl(array $service, array $healthCheck): string
+    protected function buildHealthUrl(array $service, array $healthCheck): string
     {
         $scheme = $healthCheck['scheme'] ?? 'http';
 
@@ -283,7 +262,7 @@ class ConsulManager
             $definition['Check'] = $check;
         }
 
-        $this->agent->registerService($definition);
+        $this->agent()->registerService($definition);
     }
 
     /**
@@ -293,19 +272,17 @@ class ConsulManager
      */
     public function deregisterService(string $serviceId): void
     {
-        $this->agent->deregisterService($serviceId);
+        $this->agent()->deregisterService($serviceId);
     }
 
     /**
      * Get all services known to the catalog.
      *
      * @return array Services indexed by name
-     *
-     * @throws JsonException
      */
     public function services(): array
     {
-        return $this->catalog->services()->json() ?? [];
+        return $this->catalog()->services()->json() ?? [];
     }
 
     /**
@@ -313,12 +290,10 @@ class ConsulManager
      *
      * @param  string  $name  Service name
      * @return array List of service instances with their details
-     *
-     * @throws JsonException
      */
     public function service(string $name): array
     {
-        return $this->catalog->service($name)->json() ?? [];
+        return $this->catalog()->service($name)->json() ?? [];
     }
 
     // =========================================================================
@@ -334,7 +309,7 @@ class ConsulManager
     public function healthyService(string $name): array
     {
         try {
-            return $this->health->service($name, ['passing' => true])->json() ?? [];
+            return $this->health()->service($name, ['passing' => true])->json() ?? [];
         } catch (Exception) {
             return [];
         }
@@ -347,7 +322,7 @@ class ConsulManager
      */
     public function isHealthy(string $name): bool
     {
-        return count($this->healthyService($name)) > 0;
+        return ! empty($this->healthyService($name));
     }
 
     // =========================================================================
@@ -360,8 +335,6 @@ class ConsulManager
      * @param  int  $ttlSeconds  Session TTL in seconds
      * @param  string|null  $name  Optional session name
      * @return string The session ID
-     *
-     * @throws JsonException
      */
     public function createSession(int $ttlSeconds = 60, ?string $name = null): string
     {
@@ -371,7 +344,7 @@ class ConsulManager
             $body['Name'] = $name;
         }
 
-        return $this->session->create($body)->json()['ID'];
+        return $this->session()->create($body)->json()['ID'];
     }
 
     /**
@@ -381,7 +354,7 @@ class ConsulManager
      */
     public function destroySession(string $sessionId): void
     {
-        $this->session->destroy($sessionId);
+        $this->session()->destroy($sessionId);
     }
 
     /**
@@ -391,12 +364,10 @@ class ConsulManager
      * @param  string  $sessionId  Session ID that owns the lock
      * @param  string  $value  Optional value to store with the lock
      * @return bool True if the lock was acquired
-     *
-     * @throws JsonException
      */
     public function acquireLock(string $lockKey, string $sessionId, string $value = ''): bool
     {
-        return (bool) $this->kv->put(
+        return (bool) $this->kv()->put(
             $this->prefixed($lockKey),
             $value,
             ['acquire' => $sessionId],
@@ -409,12 +380,10 @@ class ConsulManager
      * @param  string  $lockKey  Key to unlock
      * @param  string  $sessionId  Session ID that owns the lock
      * @return bool True if the lock was released
-     *
-     * @throws JsonException
      */
     public function releaseLock(string $lockKey, string $sessionId): bool
     {
-        return (bool) $this->kv->put(
+        return (bool) $this->kv()->put(
             $this->prefixed($lockKey),
             '',
             ['release' => $sessionId],
@@ -429,8 +398,6 @@ class ConsulManager
      * @param  callable  $callback  Callback to execute while holding the lock
      * @param  int  $ttlSeconds  Lock/session TTL in seconds
      * @return mixed The callback's return value, or false if the lock couldn't be acquired
-     *
-     * @throws JsonException
      */
     public function withLock(string $lockKey, callable $callback, int $ttlSeconds = 60): mixed
     {
@@ -451,37 +418,37 @@ class ConsulManager
     }
 
     // =========================================================================
-    // Raw access
+    // Raw access (lazy-loaded)
     // =========================================================================
 
     /** Get the underlying KV service */
     public function kv(): KV
     {
-        return $this->kv;
+        return $this->kv ??= new KV;
     }
 
     /** Get the underlying Agent service */
     public function agent(): Agent
     {
-        return $this->agent;
+        return $this->agent ??= new Agent;
     }
 
     /** Get the underlying Catalog service */
     public function catalog(): Catalog
     {
-        return $this->catalog;
+        return $this->catalog ??= new Catalog;
     }
 
     /** Get the underlying Health service */
     public function health(): Health
     {
-        return $this->health;
+        return $this->health ??= new Health;
     }
 
     /** Get the underlying Session service */
     public function session(): Session
     {
-        return $this->session;
+        return $this->session ??= new Session;
     }
 
     // =========================================================================
@@ -491,7 +458,7 @@ class ConsulManager
     /**
      * Apply the global KV prefix to a key.
      */
-    private function prefixed(string $key): string
+    protected function prefixed(string $key): string
     {
         return $this->prefix.$key;
     }
@@ -499,14 +466,16 @@ class ConsulManager
     /**
      * Attempt to decode a value as JSON, returning the raw string if it fails.
      */
-    private function decodeValue(?string $raw): mixed
+    protected function decodeValue(?string $raw): mixed
     {
         if ($raw === null) {
             return null;
         }
 
-        $decoded = json_decode($raw, true);
-
-        return json_last_error() === JSON_ERROR_NONE ? $decoded : $raw;
+        try {
+            return json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return $raw;
+        }
     }
 }
