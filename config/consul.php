@@ -35,8 +35,23 @@ return [
     |--------------------------------------------------------------------------
     | Service Registration
     |--------------------------------------------------------------------------
-    | If enabled, the application registers itself as a Consul service on boot
-    | and deregisters on shutdown. Set to false to disable auto-registration.
+    | If enabled, the application registers itself as a Consul service on boot.
+    | Consul's health check + DeregisterCriticalServiceAfter handle removal
+    | when the app goes down (no need to deregister on terminate).
+    |
+    | register_mode:
+    |   "once"   (default) — Register on the first Laravel boot per container,
+    |                        then skip via a tmpfs marker. Required for PHP-FPM
+    |                        where each HTTP request bootstraps Laravel anew.
+    |                        Container restart wipes /tmp → fresh register.
+    |   "always"           — Re-register on every boot. Use with Octane / Swoole
+    |                        / RoadRunner / queue workers / long-running daemons
+    |                        where Laravel boots once and stays in memory.
+    |
+    | register_ttl_seconds:
+    |   In "once" mode, force a re-register if the marker is older than this
+    |   threshold. Acts as a safety net when Consul itself restarted and lost
+    |   the service definition while the container kept running. 0 disables.
     */
     'service' => [
         'enabled' => env('CONSUL_SERVICE_ENABLED', false),
@@ -49,6 +64,8 @@ return [
             'env' => env('APP_ENV', 'local'),
             'version' => env('APP_VERSION', '1.0.0'),
         ],
+        'register_mode' => env('CONSUL_REGISTER_MODE', 'once'),
+        'register_ttl_seconds' => (int) env('CONSUL_REGISTER_TTL', 3600),
     ],
 
     /*

@@ -4,12 +4,12 @@
     "type": "library",
     "license": "MIT",
     "require": {
-        "php": "^8.3 || ^8.4",
+        "php": "^8.3",
         "friendsofphp/consul-php-sdk": "^5.3",
-        "illuminate/support": "^12.0|^13.0"
+        "illuminate/support": "^12.0 || ^13.0"
     },
     "require-dev": {
-        "orchestra/testbench": "^10.0",
+        "orchestra/testbench": "^10.0 || ^11.0",
         "pestphp/pest": "^4.0",
         "laravel/pint": "^1.29"
     },

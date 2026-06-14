@@ -63,7 +63,21 @@ CONSUL_SERVICE_PORT=8080
 CONSUL_SERVICE_TAGS=v2,production
 ```
 
-The service registers on every boot (idempotent) and Consul's health check handles cleanup when the app goes down — no deregister needed.
+The service registers **once per container** by default (a marker is dropped in `/tmp` and survives across requests but not across container restarts). Consul's health check handles cleanup when the app goes down — no deregister needed.
+
+### Register mode
+
+| Mode | When to use | Behavior |
+|------|-------------|----------|
+| `once` *(default)* | PHP-FPM behind nginx | Registers on the first Laravel boot per container, then skips. Container restart → re-register. |
+| `always` | Octane, Swoole, RoadRunner, queue workers, daemons | Re-registers on every Laravel boot. Cheap because Laravel boots only once in these contexts. |
+
+```env
+CONSUL_REGISTER_MODE=once       # default — recommended for FPM
+CONSUL_REGISTER_TTL=3600        # seconds — forces re-register if marker is stale (0 = never)
+```
+
+**Why this matters for FPM**: every HTTP request spawns a fresh Laravel boot. Without `once`, each request calls Consul's HTTP API — adding latency that can saturate FPM workers under load. The tmpfs marker keeps the bootstrap free after the first hit.
 
 ### Manual register/deregister
 

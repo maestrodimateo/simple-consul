@@ -97,9 +97,12 @@ class ConsulManager
     public function has(string $key): bool
     {
         try {
-            $keys = $this->kv()->get($this->prefixed($key), ['keys' => true])->json();
+            // keys=true matches by prefix, so we still need an exact comparison
+            // to avoid has('foo') returning true when only 'foobar' exists.
+            $prefixedKey = $this->prefixed($key);
+            $keys = $this->kv()->get($prefixedKey, ['keys' => true])->json();
 
-            return ! empty($keys);
+            return in_array($prefixedKey, $keys ?? [], true);
         } catch (Exception) {
             return false;
         }
@@ -181,7 +184,7 @@ class ConsulManager
     public function passCheck(?string $note = null): void
     {
         $checkId = 'service:'.config('consul.service.id');
-        $this->agent()->passCheck($checkId, $note);
+        $this->agent()->passCheck($checkId, $note !== null ? ['note' => $note] : []);
     }
 
     /**
@@ -412,8 +415,11 @@ class ConsulManager
         try {
             return $callback();
         } finally {
+            // Release the lock, destroy the session, then delete the key so we
+            // don't leave an empty entry in the KV store after each run.
             $this->releaseLock($lockKey, $sessionId);
             $this->destroySession($sessionId);
+            $this->delete($lockKey);
         }
     }
 
